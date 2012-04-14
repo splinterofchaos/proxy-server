@@ -1,95 +1,156 @@
-#include <stdio.h>      /* for printf() and fprintf() */
-#include <sys/socket.h> /* for socket(), bind(), and connect() */
-#include <arpa/inet.h>  /* for sockaddr_in and inet_ntoa() */
-#include <stdlib.h>     /* for atoi() and exit() */
-#include <string.h>     /* for memset() */
-#include <string>     /* for memset() */
-#include <unistd.h>     /* for close() */
+#include <stdio.h>      
+#include <sys/socket.h> 
+#include <arpa/inet.h> // For sockaddr_in and inet_ntoa().
+#include <stdlib.h>     
+#include <string.h>    
+#include <string>     
+#include <unistd.h>
 
-#define MAXPENDING 5    /* Maximum outstanding connection requests */
+#include <stdarg.h> // For va_list (see: die).
 
-void die(char *errorMessage);  /* Error handling function */
-void handle_client(int clntSocket);   /* TCP client handling function */
+struct Filefd;       // RAII file descriptor.
+struct PortListener; // Listens to a local port.
+struct Responder;    // Responds to a connection.
 
-#define RCVBUFSIZE 256   /* Size of receive buffer */
-void die(char *errorMessage)
+// Handles simple GET requests.
+void handle_client( Responder& client );
+
+void die( char *msg, ... )
 {
-    perror(errorMessage);
+    va_list args;
+    va_start( args, msg );
+
+    vfprintf( stderr, msg, args );
+    perror("");
+
+    va_end( args );
     exit(1);
 }
 
-
-void handle_client(int clntSocket)
+struct Filefd
 {
-    const int BUF_SIZE = 256;
-    char echoBuffer[BUF_SIZE];
+    int fd;
 
-    /* Receive message from client */
-    if( recv(clntSocket, echoBuffer, RCVBUFSIZE, 0) < 0 )
-        die("recv() failed");
+    Filefd();
+    Filefd( int fd );
+    ~Filefd(); // Closes fd.
 
-    puts( echoBuffer );
+    operator int& (); // returns fd.
+};
 
-    std::string helloWorldHtml = 
-        std::string("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n") +
-        "<html> <head> <title>Tutorial: HelloWorld</title> </head> <body> <h1>HelloWorld Tutorial</h1> </body> </html>";
-    /* Echo message back to client */
-    if( send(clntSocket, helloWorldHtml.data(), helloWorldHtml.size(), 0) != helloWorldHtml.size() )
-        die("send() failed");
+Filefd:: Filefd(        ) : fd(-1) {}
+Filefd:: Filefd( int fd ) : fd(fd) {}
+Filefd::~Filefd() { close( fd ); }
+Filefd::operator int& () { return fd; }
 
+struct Socket
+{
+    int sock;
+    sockaddr_in addr;
 
-    close(clntSocket);    /* Close client socket */
+    Socket();
+    Socket( int fd );
+    ~Socket();
+};
+
+Socket:: Socket(        ) { sock = -1;     }
+Socket:: Socket( int fd ) { sock = fd;     }
+Socket::~Socket(        ) { close( sock ); }
+
+struct PortListener : public Socket
+{
+    PortListener( int port );
+};
+
+PortListener::PortListener( int port )
+    : Socket( socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) )
+{
+    if( sock < 0 )
+        die( "socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) failed (%d).", sock );
+
+    memset( &addr, 0, sizeof addr );
+    addr.sin_family      = AF_INET;             // Internet address family.
+    addr.sin_addr.s_addr = htonl( INADDR_ANY ); // Any incoming interface.
+    addr.sin_port        = htons( port );       // Local port.
+
+    if( bind(sock, (sockaddr*)&addr, sizeof addr) < 0 )
+        die( "bind(%d) failed.", sock );
+
+    if( listen(sock, 5) < 0 )
+        die( "listen(%d,%d) failed.", sock, 5 );
+}
+
+struct Responder : public Socket
+{
+    Responder( int fd );
+};
+
+Responder::Responder( int fd )
+{
+    socklen_t s = sizeof addr;
+    sock = ::accept( fd, (sockaddr*)&addr, &s );
+
+    if( sock < 0 )
+        die( "accept(%d) failed.", fd );
 }
 
 int main(int argc, char *argv[])
 {
-    int servSock;                    /* Socket descriptor for server */
-    int clntSock;                    /* Socket descriptor for client */
-    struct sockaddr_in echoServAddr; /* Local address */
-    struct sockaddr_in echoClntAddr; /* Client address */
-    unsigned short echoServPort;     /* Server port */
-    unsigned int clntLen;            /* Length of client address data structure */
+    if (argc != 2)
+        die( "Usage: %s <port>.", argv[0] );
 
-    if (argc != 2)     /* Test for correct number of arguments */
+    PortListener listener( atoi(argv[1]) );
+
+    while( true )
     {
-        fprintf(stderr, "Usage:  %s <Server Port>\n", argv[0]);
-        exit(1);
+        Responder client( listener.sock );
+
+        switch( fork() )
+        {
+          case  0: close( listener.sock ); 
+                   handle_client( client ); // No return.
+
+          case -1: die( "fork failed." );
+
+          default: ; // Do it all over again.
+        }
     }
+}
 
-    echoServPort = atoi(argv[1]);  /* First arg:  local port */
+bool ends_with( const std::string& word, const char* const suffix )
+{
+    return word.rfind( suffix, word.size() - strlen(suffix) ) != std::string::npos;
+}
 
-    /* Create socket for incoming connections */
-    if ((servSock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-        die("socket() failed");
-      
-    /* Construct local address structure */
-    memset(&echoServAddr, 0, sizeof(echoServAddr));   /* Zero out structure */
-    echoServAddr.sin_family = AF_INET;                /* Internet address family */
-    echoServAddr.sin_addr.s_addr = htonl(INADDR_ANY); /* Any incoming interface */
-    echoServAddr.sin_port = htons(echoServPort);      /* Local port */
+void handle_client( Responder& client )
+{
+    // To make sure we get the client's whole message, the input must be
+    // buffered.
+    char buf[125];   // Read buffer.
+    std::string msg; // Accumulation buffer.
+    int n;           // Temp representing bytes read from recv/send.
 
-    /* Bind to the local address */
-    if (bind(servSock, (struct sockaddr *) &echoServAddr, sizeof(echoServAddr)) < 0)
-        die("bind() failed");
+    // The client will always end with "\r\n\r\n".
+    while( not ends_with(msg, "\r\n\r\n") 
+           && ( n = recv(client.sock, buf, sizeof buf, 0) ) > 0 )
+        if( n > 0 )
+            msg.append( buf, n );
 
-    /* Mark the socket so it will listen for incoming connections */
-    if (listen(servSock, MAXPENDING) < 0)
-        die("listen() failed");
+    if( n < 0 )
+        die( "recv(%d) failed.\nAlready sent:\n\"%s\"", 
+             client.sock, msg.c_str() );
 
-    for (;;) /* Run forever */
-    {
-        /* Set the size of the in-out parameter */
-        clntLen = sizeof(echoClntAddr);
+    puts( msg.c_str() );
 
-        /* Wait for a client to connect */
-        if ((clntSock = accept(servSock, (struct sockaddr *) &echoClntAddr, 
-                               &clntLen)) < 0)
-            die("accept() failed");
+    std::string helloHtml = 
+        "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n"
+        "<html>"
+            "<head> <title>Tutorial: HelloWorld</title> </head>"
+            "<body> <h1>HelloWorld Tutorial</h1>        </body>"
+        "</html>\r\n\r\n";
+    n = send( client.sock, helloHtml.c_str(), helloHtml.size(), 0 );
+    if( n != helloHtml.size() )
+        die("send(%d,\"%s\") failed.", client.sock, helloHtml.c_str() );
 
-        /* clntSock is connected to a client! */
-        printf( "Handling client %s\n", inet_ntoa(echoClntAddr.sin_addr) );
-
-        handle_client(clntSock);
-    }
-    /* NOT REACHED */
+    exit( 0 );
 }
