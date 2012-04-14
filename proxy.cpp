@@ -1,98 +1,12 @@
 #include <stdio.h>      
-#include <sys/socket.h> 
-#include <arpa/inet.h> // For sockaddr_in and inet_ntoa().
-#include <stdlib.h>     
-#include <string.h>    
 #include <string>     
-#include <unistd.h>
+#include <string.h>     
 
-#include <stdarg.h> // For va_list (see: die).
-
-struct Filefd;       // RAII file descriptor.
-struct PortListener; // Listens to a local port.
-struct Responder;    // Responds to a connection.
+#include "Socket.h"
+#include "Common.h"
 
 // Handles simple GET requests.
 void handle_client( Responder& client );
-
-void die( char *msg, ... )
-{
-    va_list args;
-    va_start( args, msg );
-
-    vfprintf( stderr, msg, args );
-    perror("");
-
-    va_end( args );
-    exit(1);
-}
-
-struct Filefd
-{
-    int fd;
-
-    Filefd();
-    Filefd( int fd );
-    ~Filefd(); // Closes fd.
-
-    operator int& (); // returns fd.
-};
-
-Filefd:: Filefd(        ) : fd(-1) {}
-Filefd:: Filefd( int fd ) : fd(fd) {}
-Filefd::~Filefd() { close( fd ); }
-Filefd::operator int& () { return fd; }
-
-struct Socket
-{
-    int sock;
-    sockaddr_in addr;
-
-    Socket();
-    Socket( int fd );
-    ~Socket();
-};
-
-Socket:: Socket(        ) { sock = -1;     }
-Socket:: Socket( int fd ) { sock = fd;     }
-Socket::~Socket(        ) { close( sock ); }
-
-struct PortListener : public Socket
-{
-    PortListener( int port );
-};
-
-PortListener::PortListener( int port )
-    : Socket( socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) )
-{
-    if( sock < 0 )
-        die( "socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) failed (%d).", sock );
-
-    memset( &addr, 0, sizeof addr );
-    addr.sin_family      = AF_INET;             // Internet address family.
-    addr.sin_addr.s_addr = htonl( INADDR_ANY ); // Any incoming interface.
-    addr.sin_port        = htons( port );       // Local port.
-
-    if( bind(sock, (sockaddr*)&addr, sizeof addr) < 0 )
-        die( "bind(%d) failed.", sock );
-
-    if( listen(sock, 5) < 0 )
-        die( "listen(%d,%d) failed.", sock, 5 );
-}
-
-struct Responder : public Socket
-{
-    Responder( int fd );
-};
-
-Responder::Responder( int fd )
-{
-    socklen_t s = sizeof addr;
-    sock = ::accept( fd, (sockaddr*)&addr, &s );
-
-    if( sock < 0 )
-        die( "accept(%d) failed.", fd );
-}
 
 int main(int argc, char *argv[])
 {
