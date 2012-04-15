@@ -1,19 +1,25 @@
-#include <string>     
-#include <cstdio>      
-#include <cstring>     
 
 #include "Socket.h"
 #include "Common.h"
 
+#include <string>     
+#include <cstdio>      
+#include <cstdlib>      
+#include <cstring>     
+
+// For use in handle_get.
+#include <glib.h>        
+#include <glib/gstdio.h>  
+
 void handle_client( int client );
-void handle_get( int client );
+void handle_get( int client, const std::string& message );
 
 int main(int argc, char *argv[])
 {
     if (argc != 2)
         die( "Usage: %s <port>.", argv[0] );
 
-    PortListener listener( atoi(argv[1]) );
+    PortListener listener( std::atoi(argv[1]) );
 
     while( true )
     {
@@ -23,7 +29,7 @@ int main(int argc, char *argv[])
         {
           case  0: close( listener.sock ); 
                    handle_client( client.sock ); 
-                   exit( 0 );
+                   std::exit( 0 );
 
           case -1: die( "fork failed." );
 
@@ -60,21 +66,56 @@ void handle_client( int client )
 
     n = sscanf( msg.c_str(), "%s", buf );
     if( strcmp(buf, "GET") == 0 )
-        handle_get( client );
+        handle_get( client, msg );
     else
         fprintf( stderr, "Unknown request, '%s'.\n", buf );
 }
 
-void handle_get( int client )
+bool send( int client, const std::string& str )
 {
-    std::string helloHtml = 
+    int n = send( client, str.c_str(), str.size(), 0 );
+    if( n < 0 )
+    {
+        fprintf( stderr, "send(%d, %s) failed.\n", 
+                 client, str.c_str() );
+        n = 0;
+    }
+    return n;
+}
+
+void handle_get( int client, const std::string& message )
+{
+    const char* const helloHtml = 
         "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n"
         "<html>"
-            "<head> <title>Tutorial: HelloWorld</title> </head>"
-            "<body> <h1>HelloWorld Tutorial</h1>        </body>"
+            "<head> <title>HelloWorld</title> </head>"
+            "<body> <h1>HelloWorld </h1>\r\n"
+                    "Welcome to CFreenet."   
+            "</body>"
         "</html>\r\n\r\n";
-    int n = send( client, helloHtml.c_str(), helloHtml.size(), 0 );
-    if( n != helloHtml.size() )
-        die("send(%d,\"%s\") failed.", client, helloHtml.c_str() );
+
+    char location[256], http[sizeof "HTTP/x.x" + 1];
+    sscanf( message.c_str(), "GET %s %s", location, http );
+
+    if( strcmp(location, "/") == 0 )
+    {
+        send( client, helloHtml );
+        return;
+    }
+
+    gchar* contents;
+    gsize size;
+
+    // Assume that the / is in relation to the user's home directory. 
+    // (Just for now--testing stage.)
+    gchar* filename = g_build_filename( g_get_home_dir(), location, 0 );
+    if( not g_file_get_contents(filename, &contents, &size, 0) )
+        die( "Requested file, %s, doesn't exist or can't be read.", filename );
+
+    if( send(client, contents, size, 0) != size )
+        die( "Could not send %s to %d", filename, client );
+
+    g_free( contents );
+    g_free( filename );
 }
 
