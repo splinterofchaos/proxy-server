@@ -5,8 +5,8 @@
 #include "Socket.h"
 #include "Common.h"
 
-// Handles simple GET requests.
-void handle_client( Responder& client );
+void handle_client( int client );
+void handle_get( int client );
 
 int main(int argc, char *argv[])
 {
@@ -22,7 +22,8 @@ int main(int argc, char *argv[])
         switch( fork() )
         {
           case  0: close( listener.sock ); 
-                   handle_client( client ); // No return.
+                   handle_client( client.sock ); 
+                   exit( 0 );
 
           case -1: die( "fork failed." );
 
@@ -37,7 +38,7 @@ bool ends_with( const std::string& word, const char* const suffix )
         != std::string::npos;
 }
 
-void handle_client( Responder& client )
+void handle_client( int client )
 {
     // To make sure we get the client's whole message, the input must be
     // buffered.
@@ -47,25 +48,33 @@ void handle_client( Responder& client )
 
     // The client will always end with "\r\n\r\n".
     while( not ends_with(msg, "\r\n\r\n") 
-           && ( n = recv(client.sock, buf, sizeof buf, 0) ) > 0 )
+           && ( n = recv(client, buf, sizeof buf, 0) ) > 0 )
         if( n > 0 )
             msg.append( buf, n );
 
     if( n < 0 )
         die( "recv(%d) failed.\nAlready sent:\n\"%s\"", 
-             client.sock, msg.c_str() );
+             client, msg.c_str() );
 
     std::puts( msg.c_str() );
 
+    n = sscanf( msg.c_str(), "%s", buf );
+    if( strcmp(buf, "GET") == 0 )
+        handle_get( client );
+    else
+        fprintf( stderr, "Unknown request, '%s'.\n", buf );
+}
+
+void handle_get( int client )
+{
     std::string helloHtml = 
         "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n"
         "<html>"
             "<head> <title>Tutorial: HelloWorld</title> </head>"
             "<body> <h1>HelloWorld Tutorial</h1>        </body>"
         "</html>\r\n\r\n";
-    n = send( client.sock, helloHtml.c_str(), helloHtml.size(), 0 );
+    int n = send( client, helloHtml.c_str(), helloHtml.size(), 0 );
     if( n != helloHtml.size() )
-        die("send(%d,\"%s\") failed.", client.sock, helloHtml.c_str() );
-
-    std::exit( 0 );
+        die("send(%d,\"%s\") failed.", client, helloHtml.c_str() );
 }
+
