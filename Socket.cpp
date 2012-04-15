@@ -3,7 +3,7 @@
 #include "Common.h"
 
 #include <unistd.h>
-#include <string.h>    
+#include <cstring>    
 
 Socket:: Socket(        ) { sock = -1;     }
 Socket:: Socket( int fd ) { sock = fd;     }
@@ -15,7 +15,7 @@ PortListener::PortListener( int port )
     if( sock < 0 )
         die( "socket(PF_INET, SOCK_STREAM, IPPROTO_TCP) failed (%d).", sock );
 
-    memset( &addr, 0, sizeof addr );
+    std::memset( &addr, 0, sizeof addr );
     addr.sin_family      = AF_INET;             // Internet address family.
     addr.sin_addr.s_addr = htonl( INADDR_ANY ); // Any incoming interface.
     addr.sin_port        = htons( port );       // Local port.
@@ -30,7 +30,7 @@ PortListener::PortListener( int port )
 Responder::Responder( int fd )
 {
     socklen_t s = sizeof addr;
-    sock = ::accept( fd, (sockaddr*)&addr, &s );
+    sock = accept( fd, (sockaddr*)&addr, &s );
 
     if( sock < 0 )
         die( "accept(%d) failed.", fd );

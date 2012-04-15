@@ -1,6 +1,7 @@
 
 #include "Common.h"
 
+// Using regular C includes here since this file is mostly std::function_calls.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>     

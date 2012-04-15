@@ -1,6 +1,6 @@
-#include <stdio.h>      
 #include <string>     
-#include <string.h>     
+#include <cstdio>      
+#include <cstring>     
 
 #include "Socket.h"
 #include "Common.h"
@@ -33,7 +33,8 @@ int main(int argc, char *argv[])
 
 bool ends_with( const std::string& word, const char* const suffix )
 {
-    return word.rfind( suffix, word.size() - strlen(suffix) ) != std::string::npos;
+    return word.rfind( suffix, word.size() - strlen(suffix) ) 
+        != std::string::npos;
 }
 
 void handle_client( Responder& client )
@@ -54,7 +55,7 @@ void handle_client( Responder& client )
         die( "recv(%d) failed.\nAlready sent:\n\"%s\"", 
              client.sock, msg.c_str() );
 
-    puts( msg.c_str() );
+    std::puts( msg.c_str() );
 
     std::string helloHtml = 
         "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n"
@@ -66,5 +67,5 @@ void handle_client( Responder& client )
     if( n != helloHtml.size() )
         die("send(%d,\"%s\") failed.", client.sock, helloHtml.c_str() );
 
-    exit( 0 );
+    std::exit( 0 );
 }
