@@ -7,15 +7,12 @@
 #include <cstdlib>      
 #include <cstring>     
 
-// For use in handle_get.
-#include <glib.h>        
-#include <glib/gstdio.h>  
-
 void handle_client( Responder& client );
 void handle_get( int client, const std::string& message );
 
 // Just a silly wrapper.
 bool send( int client, const std::string& str );
+bool send( int client, const char* const str, size_t len );
 bool send_error( int client, int error, const std::string& note );
 
 int main(int argc, char *argv[])
@@ -82,14 +79,13 @@ void handle_client( Responder& client )
 
 bool send( int client, const std::string& str )
 {
-    int n = send( client, str.c_str(), str.size(), 0 );
-    if( n < 0 )
-    {
-        fprintf( stderr, "send(%d, %s) failed.\n", 
-                 client, str.c_str() );
-        n = 0;
-    }
-    return n;
+    return send( client, str.c_str(), str.size() );
+}
+
+
+bool send( int client, const char* const str, size_t len )
+{
+    return send( client, str, len, 0 ) == len;
 }
 
 bool send_error( int client, int error, const std::string& note="" )
@@ -154,23 +150,28 @@ void handle_get( int client, const std::string& message )
 
     // Assume that the / is in relation to the user's home directory. 
     // (Just for now--testing stage.)
-    gchar* filename = g_build_filename( g_get_home_dir(), location, 0 );
-    if( not g_file_get_contents(filename, &contents, &size, 0) )
+
+    std::string filename = getenv( "HOME" );
+    filename.append( location );
+
+    FILE* f = fopen( filename.c_str(), "r" );
+    if( f )
+    {
+        printf( "\t\tFile exists. Sending..." );
+        send( client, "HTTP/1.0 200 OK\r\n" );
+
+        char buf[125];
+        size_t rd;
+        while( (rd=read(fileno(f), buf, sizeof buf)) )
+            if( not send(client, buf, rd) )
+                die( "Could not send %s to %d.", filename.c_str(), client );
+
+        fclose( f );
+        puts( "(done)" );
+    }
+    else // Requested file doesn't exist.
     {
         send_error( client, 404, filename );
-        goto free;
     }
-
-    puts( "\t\tFile exists. Sending..." );
-
-    send( client, "HTTP/1.0 200 OK\r\n" );
-    if( send(client, contents, size, 0) != size )
-        die( "Could not send %s to %d", filename, client );
-
-    puts( "\t\tFile sent." );
-
-free:
-    g_free( contents );
-    g_free( filename );
 }
 
